@@ -1,0 +1,28 @@
+#include <windows.h>
+
+1 ICON "samaya.ico"
+
+1 VERSIONINFO
+FILEVERSION 0,3,5,0
+PRODUCTVERSION 0,3,5,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Samaya Desktop"
+            VALUE "FileVersion", "0.3.5"
+            VALUE "InternalName", "samaya-desktop"
+            VALUE "OriginalFilename", "samaya-desktop.exe"
+            VALUE "ProductName", "samaya-desktop"
+            VALUE "ProductVersion", "0.3.5"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

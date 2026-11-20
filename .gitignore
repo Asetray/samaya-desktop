@@ -1,0 +1,13 @@
+/.upstream/
+/.tools/
+/build/
+/dist/
+/out/
+/CMakeUserPresets.json
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.log
+.env
+.env.*
