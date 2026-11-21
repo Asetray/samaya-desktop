@@ -20,7 +20,7 @@ TextField {
     rightPadding: 12
     color: Style.ink
     placeholderTextColor: Style.quiet
-    selectionColor: Style.selected
+    selectionColor: Style.textSelection
     selectedTextColor: Style.ink
     background: Rectangle {
         color: Style.surface

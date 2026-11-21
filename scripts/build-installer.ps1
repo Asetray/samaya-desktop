@@ -81,11 +81,11 @@ Get-ChildItem -LiteralPath $stage -Recurse -Directory | Sort-Object { $_.FullNam
 }
 $files = Join-Path $build 'uninstall-files.nsh'
 [IO.File]::WriteAllLines($files, $uninstall, [Text.UTF8Encoding]::new($true))
-$installer = Join-Path $dist 'samaya-desktop-0.3.5-win-x64-setup.exe'
+$installer = Join-Path $dist 'samaya-desktop-0.3.6-win-x64-setup.exe'
 $tmpInstaller = Join-Path $build ('samaya-' + [Guid]::NewGuid().ToString('N') + '-setup.exe')
 Invoke-Checked $nsis @('/WX', "/DSTAGE=$stage", "/DOUTPUT=$tmpInstaller", "/DUNINSTALL_FILES=$files", (Join-Path $root 'packaging/samaya-desktop.nsi'))
 
-$archive = Join-Path $dist 'samaya-desktop-0.3.5-win-x64-portable.zip'
+$archive = Join-Path $dist 'samaya-desktop-0.3.6-win-x64-portable.zip'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $tmpZip = Join-Path $build ('portable-' + [Guid]::NewGuid().ToString('N') + '.zip')
 [IO.Compression.ZipFile]::CreateFromDirectory($stage, $tmpZip)
@@ -93,5 +93,5 @@ Move-Item -LiteralPath $tmpInstaller -Destination $installer -Force
 Move-Item -LiteralPath $tmpZip -Destination $archive -Force
 $hashes = Get-FileHash -LiteralPath $installer, $archive -Algorithm SHA256
 $rows = foreach ($item in $hashes) { $item.Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($item.Path) }
-[IO.File]::WriteAllLines((Join-Path $dist 'samaya-desktop-0.3.5-SHA256SUMS.txt'), $rows, [Text.Encoding]::ASCII)
+[IO.File]::WriteAllLines((Join-Path $dist 'samaya-desktop-0.3.6-SHA256SUMS.txt'), $rows, [Text.Encoding]::ASCII)
 $hashes

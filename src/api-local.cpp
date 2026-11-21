@@ -95,11 +95,27 @@ QJsonObject Api::withLiveTurn(QJsonObject thread) const
                 const auto itemId = item.toObject().value("id");
                 qsizetype index = 0;
                 while (index < items.size() && items.at(index).toObject().value("id") != itemId) ++index;
-                if (index == items.size()) items.append(item);
-                else items.replace(index, item);
+                if (index == items.size()) {
+                    items.append(item);
+                } else {
+                    auto updated = items.at(index).toObject();
+                    const auto observed = item.toObject();
+                    auto timing = updated.value("samayaTiming").toObject();
+                    const auto observedTiming = observed.value("samayaTiming").toObject();
+                    for (auto it = observedTiming.begin(); it != observedTiming.end(); ++it)
+                        timing.insert(it.key(), it.value());
+                    for (auto it = observed.begin(); it != observed.end(); ++it)
+                        updated.insert(it.key(), it.value());
+                    if (!timing.isEmpty()) updated.insert("samayaTiming", timing);
+                    items.replace(index, updated);
+                }
             }
             merged.insert("items", items);
             merged.insert("status", cached.value("status"));
+            for (const auto *key : {"startedAt", "completedAt", "error"}) {
+                const auto value = cached.value(key);
+                if (!value.isUndefined() && !value.isNull()) merged.insert(key, value);
+            }
             turns.replace(i, merged);
         }
         thread.insert("turns", turns);
@@ -280,7 +296,7 @@ void Api::modelSettings(const QString &id, const QString &cwd, Callback done)
             break;
         }
         if (current.value("serviceTier").toString().isEmpty()) current.insert("serviceTier", "default");
-        const bool editable = !liveTurns_.contains(id) && !threads_.value(id).value("archived").toBool();
+        const bool editable = !threads_.value(id).value("archived").toBool();
         done({{{"models", models}, {"current", current}, {"editable", editable}, {"expectedTurnId", lastTurns_.value(id).value("id")}}, {}});
         });
     };
@@ -448,8 +464,8 @@ void Api::updateModel(const QJsonObject &body, Callback done)
         rpc("thread/name/set", {{"threadId", id}, {"name", value}}, std::move(done));
         return;
     }
-    if (threads_.value(id).value("archived").toBool() || liveTurns_.contains(id) || value.isEmpty()) {
-        done({{}, tr("请在未归档的空闲会话中选择模型或速度。")}); return;
+    if (threads_.value(id).value("archived").toBool() || value.isEmpty()) {
+        done({{}, tr("请在未归档的会话中选择有效的模型、思考强度或速度。")}); return;
     }
     QJsonObject params{{"threadId", id}};
     if (command == "model") {

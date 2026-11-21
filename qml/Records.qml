@@ -62,14 +62,14 @@ Item {
     function select(id) {
         selected = selected.includes(id) ? selected.filter(i => i !== id) : selected.concat([id]);
     }
-    function prepare(op) {
-        if (!selected.length || reviewing || confirming || !appRoot.online)
+    function prepare(op, targets = selected) {
+        if (!targets.length || reviewing || confirming || !appRoot.online)
             return;
         operation = op;
         plans = [];
         failures = [];
         reviewing = true;
-        const ids = selected.slice();
+        const ids = targets.slice();
         function next(index) {
             if (index >= ids.length) {
                 reviewing = false;
@@ -99,28 +99,36 @@ Item {
     function commit() {
         if (!confirming || !appRoot.online || appRoot.busy)
             return;
-        const entries = plans.slice(), retry = failures.slice(), left = selected.slice();
+        const entries = plans.slice(), retry = failures.slice(), action = operation;
+        let left = selected.slice();
         confirming = false;
         review.close();
         reviewing = true;
         function step(index) {
             if (index >= entries.length || !appRoot.online) {
                 reviewing = false;
-                reselect = left;
-                load(false);
+                if (visible) {
+                    reselect = left;
+                    load(false);
+                }
                 if (retry.length)
                     appRoot.tell(retry.join("\n"));
                 return;
             }
             const p = entries[index];
-            appRoot.act(operation, {
+            appRoot.act(action, {
                 threadId: p.id,
                 digest: p.digest
             }, (d, e) => {
                 if (e)
                     retry.push(p.id + " · " + e);
-                else
-                    left.splice(left.indexOf(p.id), 1);
+                else if (action === "delete") {
+                    const deleted = p.scope.map(summary => summary.id);
+                    appRoot.removeDeletedThreads(deleted);
+                    threads = threads.filter(summary => !deleted.includes(summary.id));
+                    left = left.filter(id => !deleted.includes(id));
+                } else
+                    left = left.filter(id => id !== p.id);
                 step(index + 1);
             });
         }
@@ -184,16 +192,16 @@ Item {
                 kind: "outline"
                 text: view.archived ? "已归档 ﹀" : "全部对话 ﹀"
                 onClicked: types.open()
-                Menu {
+                SamayaMenu {
                     id: types
-                    MenuItem {
+                    SamayaMenuItem {
                         text: "全部对话"
                         onTriggered: {
                             view.archived = false;
                             view.load(false);
                         }
                     }
-                    MenuItem {
+                    SamayaMenuItem {
                         text: "已归档"
                         onTriggered: {
                             view.archived = true;
@@ -207,15 +215,17 @@ Item {
                 kind: "outline"
                 text: view.state + " ﹀"
                 onClicked: conditions.open()
-                Menu {
+                SamayaMenu {
                     id: conditions
-                    Repeater {
+                    Instantiator {
                         model: ["全部状态", "运行中", "已结束"]
-                        MenuItem {
+                        delegate: SamayaMenuItem {
                             required property string modelData
                             text: modelData
                             onTriggered: view.state = text
                         }
+                        onObjectAdded: (i, o) => conditions.insertItem(i, o)
+                        onObjectRemoved: (i, o) => conditions.removeItem(o)
                     }
                 }
             }
@@ -282,10 +292,16 @@ Item {
             model: view.shown
             ScrollBar.vertical: ScrollBar {}
             delegate: RowLayout {
+                id: record
                 required property var modelData
+                objectName: "recordThread-" + modelData.id
                 width: list.width - 8
                 height: 72
                 spacing: 8
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: point => appRoot.showThreadMenu(record, point.position, record.modelData)
+                }
                 SamayaCheck {
                     checked: view.selected.includes(modelData.id)
                     enabled: !view.reviewing
@@ -343,6 +359,7 @@ Item {
     }
     Sheet {
         id: review
+        objectName: "threadCleanupReview"
         parent: Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(560, appRoot.width - 32)
@@ -389,11 +406,14 @@ Item {
                 Layout.alignment: Qt.AlignRight
                 SamayaButton {
                     text: "取消"
+                    objectName: "cancelThreadCleanup"
                     onClicked: review.close()
                 }
                 SamayaButton {
                     kind: "primary"
+                    objectName: "confirmThreadCleanup"
                     text: view.operation === "archive" ? "确认归档" : "永久删除"
+                    enabled: appRoot.online && !appRoot.busy
                     onClicked: view.commit()
                 }
             }

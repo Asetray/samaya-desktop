@@ -9,6 +9,8 @@ Popup {
     required property string modelLabel
     required property bool editable
     property bool listOpen: false
+    property string requestedEffort: ""
+    property int effortSelection: -1
     signal speedRequested
     readonly property var models: appRoot.catalog
     readonly property var recommended: models.find(model => model.isDefault)
@@ -17,9 +19,11 @@ Popup {
     readonly property var selected: models.find(model => model.model === current.model)
     readonly property var efforts: selected?.effortOptions || []
     readonly property string defaultEffort: selected?.defaultReasoningEffort || selected?.defaultEffort || ""
-    readonly property int effortIndex: efforts.findIndex(entry => entry.value === current.reasoningEffort)
+    readonly property string displayEffort: requestedEffort && effortSelection === appRoot.selection
+        ? requestedEffort : current.reasoningEffort || ""
+    readonly property int effortIndex: efforts.findIndex(entry => entry.value === displayEffort)
     readonly property int shownIndex: slider.pressed ? Math.round(slider.value) : effortIndex
-    readonly property string shownEffort: efforts[shownIndex]?.value || current.reasoningEffort || ""
+    readonly property string shownEffort: efforts[shownIndex]?.value || displayEffort
 
     function showList() {
         listOpen = true;
@@ -32,8 +36,13 @@ Popup {
     }
     function applyEffort(index) {
         const value = efforts[index]?.value;
-        if (editable && value && value !== current.reasoningEffort)
-            appRoot.modelSetting("reasoning", value);
+        if (!editable || requestedEffort || !value || value === displayEffort)
+            return;
+        effortSelection = appRoot.selection;
+        requestedEffort = value;
+        const settle = () => { requestedEffort = ""; };
+        if (!appRoot.modelSetting("reasoning", value, undefined, settle))
+            settle();
     }
 
     width: 260
@@ -59,34 +68,22 @@ Popup {
             Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 52
-                SamayaButton {
+                ResponseSpeedButton {
                     objectName: "speedSelector"
-                    width: 28
-                    height: 32
-                    x: -7
                     anchors.verticalCenter: parent.verticalCenter
-                    hint: "响应速度 · " + U.speedLabel(menu.current.serviceTier)
+                    serviceTier: menu.current.serviceTier || "default"
+                    iconColor: Style.link
                     enabled: menu.editable
-                    contentItem: Item {
-                        Image {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 7
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 13
-                            height: 18
-                            sourceSize: Qt.size(26, 36)
-                            source: Style.symbol("reasoning-lightning", Style.link)
-                        }
-                    }
+                    opacity: enabled || menu.requestedEffort ? 1 : 0.45
                     onClicked: menu.speedRequested()
                 }
                 SamayaButton {
                     id: effortHeading
                     objectName: "modelListButton"
                     anchors.fill: parent
-                    anchors.leftMargin: 21
+                    anchors.leftMargin: 32
                     anchors.rightMargin: 36
-                    hint: "选择模型"
+                    Accessible.name: "选择模型 · " + menu.modelLabel
                     contentItem: Item {
                         Column {
                             anchors.centerIn: parent
@@ -113,6 +110,7 @@ Popup {
                 }
                 SamayaButton {
                     id: resetEffort
+                    readonly property bool canReset: !!menu.defaultEffort && menu.defaultEffort !== menu.displayEffort
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     width: 28
@@ -122,7 +120,8 @@ Popup {
                     foreground: Style.muted
                     hint: "重置为模型默认强度"
                     Accessible.name: hint
-                    enabled: menu.editable && !!menu.defaultEffort && menu.defaultEffort !== menu.current.reasoningEffort
+                    enabled: menu.editable && canReset
+                    opacity: canReset && (menu.editable || menu.requestedEffort) ? 1 : 0.45
                     contentItem: Ink {
                         text: resetEffort.text
                         font.family: "Segoe UI Symbol"
@@ -154,6 +153,21 @@ Popup {
                 Accessible.name: "推理强度 · " + U.effortLabel(menu.shownEffort)
                 onMoved: if (!pressed) menu.applyEffort(Math.round(value))
                 onPressedChanged: if (!pressed) menu.applyEffort(Math.round(value))
+                Keys.onPressed: event => {
+                    const last = menu.efforts.length - 1;
+                    let index = Math.max(0, menu.effortIndex);
+                    switch (event.key) {
+                    case Qt.Key_Left:
+                    case Qt.Key_Down: index--; break;
+                    case Qt.Key_Right:
+                    case Qt.Key_Up: index++; break;
+                    case Qt.Key_Home: index = 0; break;
+                    case Qt.Key_End: index = last; break;
+                    default: return;
+                    }
+                    event.accepted = true;
+                    menu.applyEffort(Math.max(0, Math.min(last, index)));
+                }
                 background: Rectangle {
                     radius: height / 2
                     color: Style.subtle
@@ -165,11 +179,10 @@ Popup {
                         width: Math.max(slider.stopSize, slider.selectedCenter)
                         height: parent.height
                         radius: height / 2
-                        color: Style.primary
-                        opacity: 0.25
+                        color: Style.ink
                     }
                     Repeater {
-                        model: menu.efforts
+                        model: menu.efforts.length
                         Image {
                             required property int index
                             objectName: "reasoningStop-" + index

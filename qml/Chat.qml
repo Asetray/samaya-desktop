@@ -8,7 +8,15 @@ Item {
     required property var appRoot
     property alias composer: inputBox
     property int historyCount: 48
-    readonly property var timeline: U.timeline(appRoot.thread)
+    readonly property var timeline: appRoot.tab === "对话" ? [] : U.timeline(appRoot.thread)
+    readonly property var transcript: U.conversationTimeline(appRoot.thread)
+    readonly property var visibleTranscript: {
+        let start = Math.max(0, transcript.length - historyCount);
+        while (start > 0 && !transcript[start].startsExchange)
+            --start;
+        return transcript.slice(start);
+    }
+    readonly property var disclosures: ({})
     readonly property var artifacts: {
         let out = [];
         for (let turn of appRoot.thread.turns || [])
@@ -18,46 +26,69 @@ Item {
                         out.push(change);
         return out;
     }
-    readonly property bool narrow: width < 780
-    readonly property real readingWidth: Math.min(880, width - (narrow ? 32 : 64))
+    readonly property bool narrow: width < 640
+    readonly property real readingGutter: Math.max(20, (width - 880) / 2)
+    readonly property real readingWidth: Math.max(0, width - 2 * readingGutter)
+    function clearTextSelection(item) {
+        if ((item instanceof TextEdit || item instanceof TextInput) && item.selectedText.length)
+            item.deselect();
+        for (const child of item.children)
+            clearTextSelection(child);
+    }
+    component SelectionBackground: MouseArea {
+        z: -1
+        acceptedButtons: Qt.LeftButton
+        onClicked: view.clearTextSelection(view)
+    }
+    SelectionBackground { anchors.fill: parent }
+    component HeaderAction: SamayaButton {
+        typeSize: 13
+        implicitHeight: 32
+    }
+    component ChatTab: HeaderAction {
+        id: tabButton
+        onClicked: view.appRoot.tab = text
+        Rectangle {
+            visible: view.appRoot.tab === tabButton.text
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: tabButton.labelPadding
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 0
+            height: 2
+            color: Style.ink
+        }
+    }
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
         RowLayout {
+            objectName: "chatHeader"
             Layout.fillWidth: true
-            Layout.preferredHeight: 48
-            Layout.leftMargin: appRoot.compact ? 44 : Math.max(16, (view.width - view.readingWidth) / 2)
-            Layout.rightMargin: 12
-            spacing: 4
+            Layout.minimumHeight: appRoot.compact ? 40 : 48
+            Layout.maximumHeight: Layout.minimumHeight
+            Layout.leftMargin: appRoot.compact ? 44 : view.readingGutter
+            Layout.rightMargin: appRoot.compact ? 12 : 24
+            spacing: appRoot.compact ? 4 : 12
             Ink {
                 Layout.fillWidth: true
                 visible: !appRoot.compact
                 text: appRoot.currentId ? U.title(appRoot.thread) : U.base(appRoot.cwd) + " / 新会话"
                 font.weight: Font.Medium
-                font.pixelSize: 16
+                font.pixelSize: 18
             }
             Repeater {
                 model: appRoot.compact ? [] : ["对话", "改动与产物"]
-                delegate: SamayaButton {
+                delegate: ChatTab {
                     required property string modelData
                     text: modelData
-                    typeSize: 12
-                    onClicked: appRoot.tab = text
-                    Rectangle {
-                        visible: appRoot.tab === parent.text
-                        anchors.bottom: parent.bottom
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: parent.width - 22
-                        height: 2
-                        color: Style.ink
-                    }
                 }
             }
             Item {
                 visible: appRoot.compact
                 Layout.fillWidth: true
             }
-            SamayaButton {
+            HeaderAction {
                 visible: appRoot.collapsed && !appRoot.compact
                 glyph: "menu"
                 hint: "展开侧栏"
@@ -66,38 +97,43 @@ Item {
             Ink {
                 visible: !view.narrow && !!appRoot.currentId
                 text: U.status(appRoot.thread, ((appRoot.thread.turns || []).slice(-1))[0])
+                Layout.maximumWidth: 120
                 color: Style.muted
                 font.pixelSize: 12
             }
-            SamayaButton {
+            HeaderAction {
                 visible: !view.narrow || appRoot.compact
                 glyph: "bell"
                 text: "待处理 " + appRoot.pending.length
-                typeSize: 12
                 onClicked: appRoot.overview("待我处理")
             }
-            SamayaButton {
+            HeaderAction {
                 visible: !view.narrow || appRoot.compact
                 glyph: "alert"
                 hint: "连接与运行状态"
                 onClicked: appRoot.nav("settings")
             }
-            SamayaButton {
+            HeaderAction {
+                id: conversationOptions
+                objectName: "conversationOptions"
                 glyph: "more"
                 hint: "会话选项"
                 onClicked: menu.open()
-                Menu {
+                SamayaMenu {
                     id: menu
-                    MenuItem {
+                    x: conversationOptions.width - width
+                    y: conversationOptions.height + 4
+                    SamayaMenuItem {
+                        objectName: "pinThreadMenuItem"
                         text: appRoot.pins.includes(appRoot.currentId) ? "取消置顶" : "置顶任务"
                         enabled: !!appRoot.currentId
                         onTriggered: appRoot.pin(appRoot.currentId)
                     }
-                    MenuItem {
+                    SamayaMenuItem {
                         text: "管理工作区"
                         onTriggered: appRoot.recordsFor(appRoot.cwd)
                     }
-                    MenuItem {
+                    SamayaMenuItem {
                         text: "更改工作目录"
                         enabled: !!appRoot.currentId
                         onTriggered: {
@@ -113,13 +149,17 @@ Item {
             }
         }
         ColumnLayout {
+            objectName: "compactChatHeading"
             visible: appRoot.compact
             Layout.fillWidth: true
+            Layout.minimumHeight: 68
+            Layout.maximumHeight: 68
             Layout.leftMargin: 20
             Layout.rightMargin: 20
-            spacing: 2
+            spacing: 0
             RowLayout {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 36
                 Ink {
                     Layout.fillWidth: true
                     font.pixelSize: 18
@@ -128,26 +168,18 @@ Item {
                 }
                 Ink {
                     font.pixelSize: 12
+                    Layout.maximumWidth: 120
                     color: Style.muted
                     text: appRoot.currentId ? U.status(appRoot.thread, (appRoot.thread.turns || []).slice(-1)[0]) : ""
                 }
             }
             Row {
+                Layout.preferredHeight: 32
                 Repeater {
                     model: ["对话", "改动与产物"]
-                    SamayaButton {
+                    ChatTab {
                         required property string modelData
                         text: modelData
-                        typeSize: 13
-                        onClicked: appRoot.tab = text
-                        Rectangle {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.bottom: parent.bottom
-                            width: parent.width - 24
-                            height: 2
-                            visible: parent.text === appRoot.tab
-                            color: Style.ink
-                        }
                     }
                 }
             }
@@ -159,15 +191,57 @@ Item {
             Layout.fillWidth: true
             clip: true
             contentWidth: width
-            contentHeight: body.implicitHeight + 32
+            contentHeight: body.implicitHeight + 24
             boundsBehavior: Flickable.StopAtBounds
             property bool following: true
-            onMovementEnded: following = atYEnd
-            onContentHeightChanged: if (following && height > 0)
+            function followEnd() {
+                if (following && height > 0)
+                    contentY = Math.max(0, contentHeight - height);
+            }
+            function revealEarlier() {
+                following = false;
+                const previousY = contentY;
+                const previousHeight = contentHeight;
+                const selection = appRoot.selection;
+                const first = body.children.find(item => item.objectName === "conversationRow"
+                    && body.y + item.y + item.height > previousY);
+                const key = first ? first.entry.key : "";
+                const offset = first ? body.y + first.y - previousY : 0;
+                const reveal = () => {
+                    if (selection !== appRoot.selection || appRoot.tab !== "对话")
+                        return;
+                    view.historyCount += 48;
+                    Qt.callLater(() => {
+                        if (selection !== appRoot.selection || following)
+                            return;
+                        const item = body.children.find(row => row.objectName === "conversationRow" && row.entry.key === key);
+                        const target = item ? body.y + item.y - offset : previousY + contentHeight - previousHeight;
+                        contentY = Math.max(0, Math.min(contentHeight - height, target));
+                    });
+                };
+                if (view.visibleTranscript.length >= view.transcript.length)
+                    appRoot.older(reveal);
+                else
+                    reveal();
+            }
+            function preserveItem(item) {
+                following = false;
+                const selection = appRoot.selection;
+                const offset = contentY - item.mapToItem(contentItem, 0, 0).y;
                 Qt.callLater(() => {
-                    if (scroll.following)
-                        scroll.contentY = Math.max(0, scroll.contentHeight - scroll.height);
-                })
+                    if (!item || selection !== appRoot.selection || following)
+                        return;
+                    const anchor = item.mapToItem(contentItem, 0, 0).y;
+                    const target = anchor + Math.min(offset, Math.max(0, item.height - 32));
+                    const bounded = Math.max(0, Math.min(contentHeight - height, target));
+                    if (Math.abs(contentY - bounded) > 0.1)
+                        contentY = bounded;
+                });
+            }
+            onMovementEnded: following = atYEnd
+            // Set the offset during layout so the next frame shows the end of the new transcript.
+            onContentHeightChanged: followEnd()
+            onHeightChanged: followEnd()
             WheelHandler {
                 target: null
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -188,14 +262,22 @@ Item {
             Connections {
                 target: appRoot
                 function onSelectionChanged() {
+                    scroll.cancelFlick();
                     scroll.following = true;
                     view.historyCount = 48;
+                    scroll.followEnd();
                 }
             }
             ScrollBar.vertical: ScrollBar {}
+            SelectionBackground {
+                width: scroll.width
+                height: Math.max(scroll.height, scroll.contentHeight)
+            }
             ColumnLayout {
                 id: body
+                objectName: "transcriptBody"
                 anchors.horizontalCenter: parent.horizontalCenter
+                y: 12
                 width: view.readingWidth
                 spacing: 16
                 ColumnLayout {
@@ -219,34 +301,27 @@ Item {
                     }
                 }
                 SamayaButton {
-                    visible: appRoot.tab === "对话" && (!!appRoot.historyCursor || view.timeline.length > view.historyCount)
+                    visible: appRoot.tab === "对话" && (!!appRoot.historyCursor || view.visibleTranscript.length < view.transcript.length)
                     enabled: !appRoot.loadingOlder
                     text: "加载更早的消息"
                     Layout.alignment: Qt.AlignHCenter
-                    onClicked: {
-                        const oldHeight = scroll.contentHeight;
-                        scroll.following = false;
-                        const reveal = () => {
-                            view.historyCount += 48;
-                            Qt.callLater(() => scroll.contentY = Math.max(0, scroll.contentHeight - oldHeight));
-                        };
-                        if (view.historyCount >= view.timeline.length)
-                            appRoot.older(reveal);
-                        else
-                            reveal();
-                    }
+                    onClicked: scroll.revealEarlier()
                 }
                 Repeater {
                     model: StableRows {
-                        source: appRoot.tab === "对话" ? view.timeline.slice(-view.historyCount) : []
+                        source: appRoot.tab === "对话" ? view.visibleTranscript : []
                         keyFor: entry => entry.key
                     }
                     delegate: TranscriptItem {
                         required property QtObject row
+                        objectName: "conversationRow"
                         entry: row.value
                         appRoot: view.appRoot
+                        disclosureState: view.disclosures
                         Layout.fillWidth: true
+                        Layout.topMargin: entry.extraTop
                         onTogglingTools: scroll.following = false
+                        onResizing: item => scroll.preserveItem(item)
                     }
                 }
                 Repeater {
@@ -379,10 +454,12 @@ Item {
         }
         Composer {
             id: inputBox
+            objectName: "chatComposer"
             appRoot: view.appRoot
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: Math.min(860, view.readingWidth)
-            Layout.bottomMargin: appRoot.compact ? 8 : 20
+            Layout.topMargin: 12
+            Layout.bottomMargin: 20
         }
     }
 }
