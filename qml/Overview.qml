@@ -76,15 +76,15 @@ Item {
                 text: (view.project ? U.base(view.project) : "所有项目") + " ﹀"
                 kind: "outline"
                 onClicked: projectMenu.open()
-                Menu {
+                SamayaMenu {
                     id: projectMenu
-                    MenuItem {
+                    SamayaMenuItem {
                         text: "所有项目"
                         onTriggered: view.project = ""
                     }
                     Instantiator {
                         model: appRoot.groups
-                        delegate: MenuItem {
+                        delegate: SamayaMenuItem {
                             required property var modelData
                             text: U.base(modelData.path)
                             onTriggered: view.project = modelData.path
@@ -99,15 +99,17 @@ Item {
                 kind: "outline"
                 text: view.state + " ﹀"
                 onClicked: states.open()
-                Menu {
+                SamayaMenu {
                     id: states
-                    Repeater {
+                    Instantiator {
                         model: ["全部状态", "运行中", "待处理", "已结束"]
-                        MenuItem {
+                        delegate: SamayaMenuItem {
                             required property string modelData
                             text: modelData
                             onTriggered: view.state = text
                         }
+                        onObjectAdded: (i, o) => states.insertItem(i, o)
+                        onObjectRemoved: (i, o) => states.removeItem(o)
                     }
                 }
             }
@@ -221,12 +223,17 @@ Item {
                         id: r
                         required property QtObject row
                         readonly property var modelData: row.value
+                        objectName: "overviewThread-" + (modelData?.thread?.id || "")
                         width: group.width
                         height: 64
                         radius: 8
                         color: view.waiting(modelData.thread.id) || U.active(modelData.thread) ? Style.subtle : hover.hovered ? Style.hover : "transparent"
                         HoverHandler {
                             id: hover
+                        }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: point => appRoot.showThreadMenu(r, point.position, r.modelData.thread)
                         }
                         Rectangle {
                             anchors.bottom: parent.bottom

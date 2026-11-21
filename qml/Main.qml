@@ -26,8 +26,32 @@ ApplicationWindow {
     property var rows: []
     property var pending: []
     property var groups: U.grouped(rows)
-    property var pins: desktop.setting("workspace/pins", [])
+    property var pins: {
+        const stored = desktop.setting("workspace/pins", []);
+        if (typeof stored === "string") {
+            try {
+                const parsed = JSON.parse(stored);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        }
+        return Array.from(stored || []);
+    }
     property string currentId: ""
+    property string openingThreadId: ""
+    property int openThreadSeq: 0
+    readonly property bool showOpeningThread: !!openingThreadId && !openingIndicator.running
+    onOpeningThreadIdChanged: {
+        if (openingThreadId)
+            openingIndicator.restart();
+        else
+            openingIndicator.stop();
+    }
+    Timer {
+        id: openingIndicator
+        interval: 180
+    }
     property string cwd: ""
     property var thread: ({})
     property var currentRequests: pending.filter(r => r.params.threadId === currentId)
@@ -49,6 +73,7 @@ ApplicationWindow {
     property var usage: ({})
     property var account: ({})
     property var activeModel: ({})
+    property int modelSettingsRevision: 0
     property var catalog: []
     property var selectionSettings: ({})
     property var blockedModelChoice: null
@@ -60,6 +85,15 @@ ApplicationWindow {
         target: Style
         property: "dark"
         value: app.appearance === 2 || (app.appearance === 0 && desktop.systemDark)
+    }
+    function syncWindowFrame() {
+        if (visible)
+            desktop.styleWindowFrame(app, Style.dark, Style.bg, Style.ink, Style.border);
+    }
+    onVisibleChanged: if (visible) Qt.callLater(syncWindowFrame)
+    Connections {
+        target: Style
+        function onDarkChanged() { Qt.callLater(app.syncWindowFrame); }
     }
     function tell(msg) {
         if (msg) {
@@ -122,6 +156,9 @@ ApplicationWindow {
         if (!online || !currentId)
             return;
         const id = currentId, seq = ++detailSeq;
+        const settingsRevision = modelSettingsRevision;
+        if (subscribe)
+            reading = true;
         desktop.read("/threads/" + encodeURIComponent(id), {
             subscribe: !!subscribe
         }, (d, e) => {
@@ -132,26 +169,29 @@ ApplicationWindow {
                 tell(e);
                 return;
             }
-            const nextThread = d.thread || {};
-            if (historyExtended) {
-                const ids = new Set((nextThread.turns || []).map(t => t.id));
-                nextThread.turns = (thread.turns || []).filter(t => !ids.has(t.id)).concat(nextThread.turns || []);
-            } else
-                historyCursor = d.historyCursor || "";
-            thread = nextThread;
-            cwd = thread.cwd || cwd;
-            if (d.pendingRequests) {
-                const next = pending.filter(r => r.params.threadId !== id).concat(d.pendingRequests);
-                if (JSON.stringify(next) !== JSON.stringify(pending))
-                    pending = next;
-            }
-            if (thread.model)
-                activeModel = Object.assign({
-                    model: thread.model,
-                    reasoningEffort: thread.reasoningEffort || "",
-                    serviceTier: thread.serviceTier || "default"
-                }, selectionSettings);
+            applyThreadDetail(id, d, settingsRevision, cwd);
         });
+    }
+    function applyThreadDetail(id, d, settingsRevision, fallbackCwd) {
+        const nextThread = d.thread || {};
+        if (historyExtended) {
+            const ids = new Set((nextThread.turns || []).map(t => t.id));
+            nextThread.turns = (thread.turns || []).filter(t => !ids.has(t.id)).concat(nextThread.turns || []);
+        } else
+            historyCursor = d.historyCursor || "";
+        thread = nextThread;
+        cwd = thread.cwd || fallbackCwd;
+        if (d.pendingRequests) {
+            const next = pending.filter(r => r.params.threadId !== id).concat(d.pendingRequests);
+            if (!U.sameData(pending, next))
+                pending = next;
+        }
+        if (thread.model && settingsRevision === modelSettingsRevision)
+            activeModel = Object.assign({
+                model: thread.model,
+                reasoningEffort: thread.reasoningEffort || "",
+                serviceTier: thread.serviceTier || "default"
+            }, selectionSettings);
     }
     function older(done) {
         if (!historyCursor || loadingOlder || !online)
@@ -179,6 +219,7 @@ ApplicationWindow {
         });
     }
     function nav(p) {
+        openingThreadId = "";
         drawer = false;
         page = p;
         if (p === "usage")
@@ -194,24 +235,83 @@ ApplicationWindow {
         nav("records");
         recordsView.load(false);
     }
+    function showThreadMenu(source, position, summary) {
+        if (!summary?.id)
+            return;
+        const point = source.mapToItem(threadMenu.parent, position.x, position.y);
+        threadMenu.targetThread = summary;
+        threadMenu.popup(point.x, point.y);
+    }
+    function applyThreadName(id, name) {
+        ++monitorSeq;
+        const rename = summary => Object.assign({}, summary, {name: name});
+        rows = rows.map(record => record.thread.id === id ? Object.assign({}, record, {thread: rename(record.thread)}) : record);
+        recordsView.threads = recordsView.threads.map(summary => summary.id === id ? rename(summary) : summary);
+        if (currentId === id) {
+            thread = rename(thread);
+            refreshThread(false);
+        }
+    }
+    function removeDeletedThreads(ids) {
+        const removed = new Set(ids);
+        ++monitorSeq;
+        rows = rows.filter(record => !removed.has(record.thread.id));
+        pending = pending.filter(request => !removed.has(request.params.threadId));
+        if (removed.has(openingThreadId))
+            openingThreadId = "";
+        if (removed.has(currentId)) {
+            ++selection;
+            ++detailSeq;
+            currentId = "";
+            thread = {};
+            reading = false;
+            activeModel = {};
+            selectionSettings = {};
+            if (page === "chat")
+                overview("任务总览");
+        }
+        for (const id of removed) {
+            if (pins.includes(id))
+                pin(id);
+            delete drafts[id];
+        }
+    }
     function openThread(id) {
-        if (!id)
+        if (!id || id === openingThreadId)
             return;
         if (id === currentId && page === "chat" && (reading || thread.turns)) {
-            drawer = false;
+            nav("chat");
             return;
         }
         const r = rows.find(x => x.thread.id === id);
+        const summary = r ? r.thread : {id: id};
+        if (!online) {
+            showThread(id, {thread: summary}, summary.cwd || "");
+            return;
+        }
+        const seq = ++openThreadSeq;
+        openingThreadId = id;
+        desktop.read("/threads/" + encodeURIComponent(id), {subscribe: true}, (d, e) => {
+            if (openingThreadId !== id || seq !== openThreadSeq)
+                return;
+            if (e) {
+                openingThreadId = "";
+                tell(e);
+                return;
+            }
+            showThread(id, d, summary.cwd || "");
+        });
+    }
+    function showThread(id, detail, fallbackCwd) {
         ++selection;
+        ++detailSeq;
         currentId = id;
-        thread = r ? r.thread : {};
-        cwd = thread.cwd || "";
-        reading = true;
+        reading = false;
         activeModel = {};
         selectionSettings = {};
         tab = "对话";
+        applyThreadDetail(id, detail, modelSettingsRevision, fallbackCwd);
         nav("chat");
-        refreshThread(true);
     }
     function newThread(path) {
         if (!online) {
@@ -254,11 +354,14 @@ ApplicationWindow {
             });
     }
     function pin(id) {
+        if (!id)
+            return;
         pins = pins.includes(id) ? pins.filter(p => p !== id) : pins.concat([id]);
-        desktop.save("workspace/pins", pins);
+        desktop.save("workspace/pins", JSON.stringify(pins));
     }
     function models(cb, onFailure) {
         const id = currentId, serial = selection;
+        const settingsRevision = modelSettingsRevision;
         desktop.read(id ? "/threads/" + encodeURIComponent(id) + "/model-settings" : "/models", {cwd: cwd}, (d, e) => {
             if (serial !== selection) {
                 if (onFailure)
@@ -272,13 +375,18 @@ ApplicationWindow {
                 return;
             }
             catalog = d.models || [];
-            activeModel = Object.assign({}, d.current || {}, selectionSettings);
+            if (settingsRevision === modelSettingsRevision)
+                activeModel = Object.assign({}, d.current || {}, selectionSettings);
             if (cb)
                 cb();
         });
     }
-    function modelSetting(command, value, onApplied) {
-        if (busy || !online) return;
+    function modelSetting(command, value, onApplied, onSettled) {
+        if (busy || !online || openingThreadId) return false;
+        if (thread.archived) {
+            tell("请先恢复这条已归档会话。");
+            return false;
+        }
         const key = ({
                 model: "model",
                 reasoning: "reasoningEffort",
@@ -287,7 +395,7 @@ ApplicationWindow {
         let next = Object.assign({}, activeModel);
         next[key] = value;
         const target = catalog.find(m => m.model === next.model);
-        if (!target) { tell("模型目录已变化，请重新打开模型菜单。"); return; }
+        if (!target) { tell("模型目录已变化，请重新打开模型菜单。"); return false; }
         if (command === "model") {
             if (!(target.effortOptions || []).some(o => o.value === next.reasoningEffort))
                 next.reasoningEffort = target.defaultReasoningEffort || target.defaultEffort || null;
@@ -295,18 +403,17 @@ ApplicationWindow {
                 next.serviceTier = "default";
         }
         if (!currentId) {
+            ++modelSettingsRevision;
             selectionSettings = next;
             activeModel = next;
             if (onApplied)
                 onApplied();
-            return;
+            if (onSettled)
+                onSettled();
+            return true;
         }
-        const last = (thread.turns || []).slice(-1)[0] || {};
-        if (last.status === "inProgress" || thread.archived) {
-            tell(thread.archived ? "请先恢复这条已归档会话。" : "本轮运行结束后可以更改模型和速度。");
-            return;
-        }
-        const id = currentId;
+        const duringTurn = (thread.turns || []).slice(-1)[0]?.status === "inProgress";
+        const id = currentId, serial = selection;
         const args = {value: value};
         if (command === "model") {
             args.effort = next.reasoningEffort;
@@ -317,18 +424,25 @@ ApplicationWindow {
             command: command,
             args: args
         }, (d, e, raw) => {
-            if (currentId !== id) return;
-            if (!e) {
-                activeModel = Object.assign({}, next, d.modelSettings.current);
-                blockedModelChoice = null;
-                if (onApplied)
-                    onApplied();
-            } else if (raw.externalWriter) {
-                thread = Object.assign({}, thread, {externalWriter: true});
-                blockedModelChoice = {threadId: id, command: command, value: value, settings: next};
-                modelConflict.open();
+            if (currentId === id && selection === serial) {
+                if (!e) {
+                    ++modelSettingsRevision;
+                    activeModel = Object.assign({}, next, d.modelSettings?.current);
+                    blockedModelChoice = null;
+                    if (duringTurn)
+                        tell("已保存，下一轮生效。");
+                    if (onApplied)
+                        onApplied();
+                } else if (raw.externalWriter) {
+                    thread = Object.assign({}, thread, {externalWriter: true});
+                    blockedModelChoice = {threadId: id, command: command, value: value, settings: next};
+                    modelConflict.open();
+                }
             }
+            if (onSettled)
+                onSettled();
         });
+        return true;
     }
     function forkModelChoice() {
         const choice = blockedModelChoice;
@@ -354,10 +468,11 @@ ApplicationWindow {
         interval: 90
         onTriggered: {
             const id = app.currentId;
+            const selection = app.selection;
             if (!id || app.page !== "chat" || app.reading)
                 return;
             desktop.read("/threads/" + encodeURIComponent(id) + "/live", {}, (d, e) => {
-                if (e || app.currentId !== id || !d.turn || !d.turn.id)
+                if (e || app.selection !== selection || app.currentId !== id || !d.turn || !d.turn.id)
                     return;
                 let turns = (app.thread.turns || []).slice(), i = turns.findIndex(t => t.id === d.turn.id);
                 if (i < 0)
@@ -401,9 +516,11 @@ ApplicationWindow {
     }
     Connections {
         target: desktop
+        function onAppearanceChanged() { Qt.callLater(app.syncWindowFrame); }
         function onLost() {
             app.online = false;
             app.connecting = false;
+            app.openingThreadId = "";
             app.busy = false;
             app.problem = "已有 Codex App Server 已断开连接。";
         }
@@ -423,7 +540,10 @@ ApplicationWindow {
             }
         }
     }
-    Component.onCompleted: connectExisting()
+    Component.onCompleted: {
+        syncWindowFrame();
+        connectExisting();
+    }
     Shortcut {
         sequence: "Ctrl+K"
         onActivated: search.open()
@@ -504,6 +624,92 @@ ApplicationWindow {
         appRoot: app
         parent: Overlay.overlay
         anchors.centerIn: parent
+    }
+    SamayaMenu {
+        id: threadMenu
+        objectName: "threadContextMenu"
+        parent: Overlay.overlay
+        implicitWidth: 140
+        property var targetThread: ({})
+        SamayaMenuItem {
+            objectName: "renameThreadAction"
+            text: "重命名"
+            enabled: app.online && !app.busy
+            onTriggered: renameSheet.openFor(threadMenu.targetThread)
+        }
+        SamayaMenuItem {
+            objectName: "deleteThreadAction"
+            text: "删除"
+            enabled: app.online && !app.busy
+            onTriggered: recordsView.prepare("delete", [threadMenu.targetThread.id])
+        }
+    }
+    Sheet {
+        id: renameSheet
+        objectName: "renameThreadSheet"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(420, app.width - 32)
+        height: renameLayout.implicitHeight + topPadding + bottomPadding
+        closePolicy: app.busy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property string threadId: ""
+        property string originalName: ""
+        function openFor(summary) {
+            threadId = summary.id;
+            originalName = U.title(summary);
+            nameInput.text = originalName;
+            open();
+        }
+        function saveName() {
+            const name = nameInput.text.trim();
+            if (!threadId || !name || name === originalName || !app.online || app.busy)
+                return;
+            const id = threadId;
+            app.act("command", {threadId: id, command: "rename", args: {value: name}}, (_, error) => {
+                if (!error) {
+                    app.applyThreadName(id, name);
+                    close();
+                }
+            });
+        }
+        onOpened: {
+            nameInput.forceActiveFocus();
+            nameInput.selectAll();
+        }
+        ColumnLayout {
+            id: renameLayout
+            anchors.fill: parent
+            spacing: 12
+            Ink {
+                text: "重命名对话"
+                font.pixelSize: 20
+                font.weight: Font.Medium
+            }
+            Field {
+                id: nameInput
+                objectName: "threadNameInput"
+                Layout.fillWidth: true
+                placeholderText: "输入对话名称"
+                Accessible.name: "对话名称"
+                enabled: !app.busy
+                onAccepted: renameSheet.saveName()
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                SamayaButton {
+                    text: "取消"
+                    enabled: !app.busy
+                    onClicked: renameSheet.close()
+                }
+                SamayaButton {
+                    kind: "primary"
+                    text: "保存"
+                    enabled: app.online && !app.busy && !!nameInput.text.trim()
+                             && nameInput.text.trim() !== renameSheet.originalName
+                    onClicked: renameSheet.saveName()
+                }
+            }
+        }
     }
     Sheet {
         id: modelConflict
@@ -594,6 +800,7 @@ ApplicationWindow {
             width: parent.width - 24
             text: app.notice
             wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
         }
     }
 }

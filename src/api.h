@@ -63,9 +63,12 @@ private:
     void modelPage(const QString &cursor, QJsonArray rows, Callback done);
     void updateModel(const QJsonObject &body, Callback done);
 
+    void startProxy();
+    void startDaemon();
     void initialize();
     ControlChannel channel_;
     QProcess process_;
+    QProcess daemonStarter_;
 #ifdef Q_OS_WIN
     std::unique_ptr<NativeStdio> stdio_;
     QTimer stdioTimer_;
@@ -80,5 +83,5 @@ private:
     QSet<QString> subscribed_;
     QSet<QString> externalWriters_;
     qint64 nextId_ = 0, connectionAttempt_ = 0;
-    bool ready_ = false, shuttingDown_ = false;
+    bool ready_ = false, shuttingDown_ = false, triedDaemonStart_ = false;
 };

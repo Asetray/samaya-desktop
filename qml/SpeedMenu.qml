@@ -6,6 +6,7 @@ import "Util.js" as U
 Popup {
     id: menu
     required property var appRoot
+    required property bool editable
     signal chosen(string value)
     readonly property var currentModel: appRoot.catalog.find(m => m.model === appRoot.activeModel.model) || {}
     readonly property var options: [{id: "default"}].concat((currentModel.serviceTiers || []).filter(t => t.id && t.id !== "default"))
@@ -34,7 +35,7 @@ Popup {
                     : modelData.id === "fast" || modelData.id === "priority" ? "更快响应，可能增加用量"
                     : modelData.id === "ultrafast" ? "优先缩短响应时间" : modelData.description || ""
                 selected: (appRoot.activeModel.serviceTier || "default") === modelData.id
-                enabled: appRoot.online && !appRoot.busy
+                enabled: menu.editable
                 fill: selected ? Style.subtle : hovered ? Style.hover : "transparent"
                 Accessible.name: text + "，" + description
                 Accessible.role: Accessible.RadioButton

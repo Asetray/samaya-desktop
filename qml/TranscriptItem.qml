@@ -3,62 +3,68 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import "Util.js" as U
 
-ColumnLayout {
+Item {
     id: line
     required property var entry
     required property var appRoot
+    property var disclosureState: ({})
     property bool expanded: false
     signal togglingTools()
-    spacing: 6
+    signal resizing(Item item)
+    implicitHeight: presentation.item ? presentation.item.implicitHeight : 0
     Loader {
-        Layout.fillWidth: true
-        sourceComponent: entry.kind === "userMessage" ? user : entry.kind === "tools" ? tools : agent
+        id: presentation
+        anchors.fill: parent
+        sourceComponent: {
+            switch (entry.kind) {
+            case "userMessage": return user;
+            case "tools": return tools;
+            case "process": return process;
+            case "time": return timestamp;
+            case "userShell":
+            case "error": return notice;
+            default: return agent;
+            }
+        }
+    }
+    Component {
+        id: process
+        WorkProcess {
+            entry: line.entry
+            appRoot: line.appRoot
+            disclosureState: line.disclosureState
+            onResizing: item => line.resizing(item)
+        }
+    }
+    Component {
+        id: timestamp
+        Item {
+            objectName: "conversationTime"
+            implicitHeight: 20
+            Ink {
+                anchors.fill: parent
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: 12
+                color: Style.muted
+                text: U.conversationTime(line.entry.at)
+            }
+        }
+    }
+    Component {
+        id: notice
+        Ink {
+            text: U.messageText(line.entry.item)
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            font.pixelSize: 14
+        }
     }
     Component {
         id: user
-        Item {
-            implicitHeight: bubble.height
-            Rectangle {
-                id: bubble
-                anchors.right: parent.right
-                width: Math.min(parent.width, Math.max(150, parent.width * (appRoot.compact ? 0.88 : 0.62)))
-                height: userBody.implicitHeight + 22
-                radius: 12
-                color: Style.subtle
-                ColumnLayout {
-                    id: userBody
-                    x: 16
-                    y: 11
-                    width: parent.width - 32
-                    spacing: 6
-                    Repeater {
-                        model: line.entry.item.content || []
-                        delegate: ColumnLayout {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            Ink {
-                                visible: modelData.type === "text"
-                                Layout.fillWidth: true
-                                text: modelData.text || ""
-                                wrapMode: Text.Wrap
-                                elide: Text.ElideNone
-                                font.pixelSize: 16
-                                lineHeight: 1.45
-                            }
-                            Image {
-                                visible: modelData.type === "image" && !!modelData.url
-                                source: visible ? modelData.url : ""
-                                fillMode: Image.PreserveAspectFit
-                                Layout.maximumHeight: 160
-                                Layout.fillWidth: true
-                                TapHandler {
-                                    onTapped: appRoot.previewImage = parent.source
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        UserMessage {
+            item: line.entry.item
+            appRoot: line.appRoot
+            onResizing: line.resizing(line)
         }
     }
     Component {
@@ -68,6 +74,23 @@ ColumnLayout {
             TextEdit {
                 id: replyText
                 objectName: "replyBody"
+                property bool readyForLayout: false
+                property bool formatting: false
+                readonly property int hoveredLinkPosition: linkPointer.hovered && hoveredLink
+                    ? positionAt(linkPointer.point.position.x, linkPointer.point.position.y, TextEdit.CursorOnCharacter)
+                    : -1
+                function updateLinkHover() {
+                    if (readyForLayout)
+                        desktop.setReplyLinkHover(textDocument, hoveredLinkPosition);
+                }
+                function updateFormatting() {
+                    if (!readyForLayout || formatting)
+                        return;
+                    formatting = true;
+                    desktop.styleReply(textDocument, Style.link, Style.linkHover, Style.hover);
+                    updateLinkHover();
+                    formatting = false;
+                }
                 Layout.fillWidth: true
                 text: U.messageText(line.entry.item)
                 textFormat: TextEdit.MarkdownText
@@ -78,11 +101,26 @@ ColumnLayout {
                 font.pixelSize: 16
                 color: Style.ink
                 selectedTextColor: Style.ink
-                selectionColor: Style.selected
-                Component.onCompleted: desktop.styleReplyLinks(textDocument, Style.link)
+                selectionColor: Style.textSelection
+                HoverHandler {
+                    id: linkPointer
+                    objectName: "replyLinkHover"
+                    cursorShape: replyText.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor
+                }
+                onHoveredLinkPositionChanged: updateLinkHover()
+                onLinkActivated: link => {
+                    if (!desktop.openReplyLink(link, line.appRoot.cwd || ""))
+                        line.appRoot.tell("无法打开此链接。");
+                }
+                onSelectedTextChanged: desktop.repaintReplySelection(textDocument)
+                onTextChanged: updateFormatting()
+                Component.onCompleted: {
+                    readyForLayout = true;
+                    updateFormatting();
+                }
                 Connections {
                     target: Style
-                    function onLinkChanged() { desktop.styleReplyLinks(replyText.textDocument, Style.link) }
+                    function onLinkChanged() { replyText.updateFormatting() }
                 }
             }
             SamayaButton {

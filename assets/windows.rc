@@ -3,8 +3,8 @@
 1 ICON "samaya.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,3,5,0
-PRODUCTVERSION 0,3,5,0
+FILEVERSION 0,3,6,0
+PRODUCTVERSION 0,3,6,0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
@@ -14,11 +14,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Samaya Desktop"
-            VALUE "FileVersion", "0.3.5"
+            VALUE "FileVersion", "0.3.6"
             VALUE "InternalName", "samaya-desktop"
             VALUE "OriginalFilename", "samaya-desktop.exe"
             VALUE "ProductName", "samaya-desktop"
-            VALUE "ProductVersion", "0.3.5"
+            VALUE "ProductVersion", "0.3.6"
         END
     END
     BLOCK "VarFileInfo"

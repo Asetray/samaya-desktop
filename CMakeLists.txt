@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(samaya-desktop VERSION 0.3.5 LANGUAGES CXX)
+project(samaya-desktop VERSION 0.3.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +13,7 @@ target_sources(samaya-desktop PRIVATE ${desktop_moc})
 qt_add_resources(samaya-desktop desktop_assets PREFIX / BASE assets FILES
     assets/alert.svg assets/arrow.svg assets/bell.svg assets/chevron.svg
     assets/copy.svg assets/menu.svg assets/model-lightning.svg assets/more.svg
+    assets/speed-lightning-outline.svg
     assets/plus.svg assets/samaya-symbol.svg assets/search.svg assets/stop.svg
     assets/history.svg assets/inbox.svg assets/panels-top-left.svg assets/pin.svg assets/settings.svg
 )
@@ -24,6 +25,7 @@ endif()
 if(WIN32)
     target_sources(samaya-desktop PRIVATE assets/windows.rc src/native-stdio.cpp src/native-stdio.h)
     target_include_directories(samaya-desktop PRIVATE assets)
+    target_link_libraries(samaya-desktop PRIVATE dwmapi)
 endif()
 install(TARGETS samaya-desktop RUNTIME DESTINATION .)
 install(FILES THIRD-PARTY.md DESTINATION .)

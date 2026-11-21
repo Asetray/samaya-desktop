@@ -25,7 +25,9 @@ Rectangle {
     property string dialogAction: ""
     property string dialogThread: ""
     property bool modelLoading: false
-    readonly property bool canChangeModel: appRoot.online && !appRoot.busy && !running && !appRoot.thread.archived
+    property bool speedLoading: false
+    property int modelSettingsSelection: -1
+    readonly property bool canChangeModel: appRoot.online && !appRoot.busy && !appRoot.openingThreadId && !appRoot.thread.archived
     readonly property string modelLabel: appRoot.catalog.find(m => m.model === appRoot.activeModel.model)?.displayName
                                          || appRoot.activeModel.model || "选择模型"
     readonly property var commands: [
@@ -154,7 +156,7 @@ Rectangle {
     readonly property bool running: last.status === "inProgress"
     readonly property bool hasDraft: !!editor.text.trim() || attachments.length > 0 || references.length > 0
     readonly property bool stopMode: running && !hasDraft
-    implicitHeight: layout.implicitHeight + 24
+    implicitHeight: layout.implicitHeight + 26
     radius: 24
     color: Style.surface
     border.color: drop.containsDrag ? Style.accent : Style.border
@@ -208,20 +210,55 @@ Rectangle {
             return;
         }
         withModelSettings(() => {
-            speedMenu.close();
             modelMenu.listOpen = showList;
             modelMenu.open();
+            speedMenu.close();
         });
     }
     function withModelSettings(show) {
-        if (modelLoading || !canChangeModel)
+        if (modelLoading || speedLoading || !canChangeModel)
             return;
         modelLoading = true;
         appRoot.models(() => {
+            modelSettingsSelection = appRoot.selection;
             modelLoading = false;
             if (visible && canChangeModel)
                 show();
         }, () => modelLoading = false);
+    }
+    function toggleSpeedMenu(origin) {
+        if (speedMenu.visible) {
+            speedMenu.close();
+            return;
+        }
+        if (speedLoading || modelLoading || !canChangeModel)
+            return;
+        const selection = appRoot.selection;
+        const show = () => {
+            if (!visible || selection !== appRoot.selection || !canChangeModel)
+                return;
+            speedMenu.returnFocus = origin;
+            speedMenu.open();
+            modelMenu.close();
+        };
+        if (modelSettingsSelection === selection && appRoot.catalog.some(model => model.model === appRoot.activeModel.model)) {
+            show();
+            return;
+        }
+        speedLoading = true;
+        appRoot.models(() => {
+            speedLoading = false;
+            if (selection === appRoot.selection)
+                modelSettingsSelection = selection;
+            show();
+        }, () => speedLoading = false);
+    }
+    Connections {
+        target: appRoot
+        function onOnlineChanged() {
+            if (!appRoot.online)
+                box.modelSettingsSelection = -1;
+        }
     }
     function catalog(type) {
         const context = appRoot.selection;
@@ -296,7 +333,7 @@ Rectangle {
         }
     }
     function send() {
-        if (!appRoot.online || appRoot.busy || appRoot.thread.archived)
+        if (!appRoot.online || appRoot.busy || appRoot.openingThreadId || appRoot.thread.archived)
             return;
         if (!hasDraft) {
             if (running)
@@ -406,24 +443,29 @@ Rectangle {
     }
     ColumnLayout {
         id: layout
-        x: 16
-        y: 12
-        width: parent.width - 32
+        x: 17
+        y: 13
+        width: parent.width - 34
         spacing: 8
         Flow {
+            id: attachmentFlow
             visible: box.attachments.length + box.references.length > 0
             Layout.fillWidth: true
-            spacing: 4
+            spacing: 8
             Repeater {
                 model: box.attachments
-                delegate: Row {
+                delegate: RowLayout {
                     required property var modelData
                     required property int index
+                    width: Math.min(implicitWidth, attachmentFlow.width)
+                    height: 40
+                    spacing: 8
                     Image {
                         visible: !!modelData.url
                         source: modelData.url || ""
-                        width: visible ? 52 : 0
-                        height: 40
+                        Layout.preferredWidth: 52
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignVCenter
                         fillMode: Image.PreserveAspectCrop
                         TapHandler {
                             onTapped: appRoot.previewImage = parent.source
@@ -431,12 +473,17 @@ Rectangle {
                     }
                     Ink {
                         text: modelData.name
-                        anchors.verticalCenter: parent.verticalCenter
                         font.pixelSize: 12
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: Math.min(implicitWidth, 180)
+                        Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignVCenter
                     }
                     SamayaButton {
                         glyph: "search-close"
                         hint: "移除附件"
+                        implicitHeight: 32
+                        Layout.alignment: Qt.AlignVCenter
                         onClicked: box.attachments = box.attachments.filter((_, i) => i !== index)
                     }
                 }
@@ -454,7 +501,7 @@ Rectangle {
         ScrollView {
             objectName: "composerTextArea"
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(168, Math.max(48, editor.contentHeight))
+            Layout.preferredHeight: Math.min(168, Math.max(appRoot.compact ? 40 : 48, editor.implicitHeight))
             contentWidth: availableWidth
             clip: true
             TextArea {
@@ -463,10 +510,12 @@ Rectangle {
                 placeholderText: !appRoot.online ? "等待连接恢复…" : box.running ? "追加当前指令…" : appRoot.currentId ? "发送消息…" : "在 " + U.base(appRoot.cwd) + " 中发送消息…"
                 color: Style.ink
                 placeholderTextColor: Style.muted
-                selectionColor: Style.selected
+                selectionColor: Style.textSelection
                 font.family: Style.family
                 font.pixelSize: 16
                 padding: 0
+                leftPadding: 8
+                topPadding: 4
                 rightPadding: 12
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
@@ -525,10 +574,12 @@ Rectangle {
         RowLayout {
             id: toolbar
             objectName: "composerToolbar"
+            readonly property int buttonHeight: 36
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
+            Layout.preferredHeight: toolbar.buttonHeight
             spacing: 8
             SamayaButton {
+                id: addButton
                 glyph: "plus"
                 hint: "添加"
                 implicitWidth: 36
@@ -555,73 +606,57 @@ Rectangle {
             Item {
                 Layout.fillWidth: true
             }
-            SamayaButton {
-                id: modeSelector
-                text: box.mode
-                typeSize: 13
-                implicitHeight: 32
-                implicitWidth: 38
-                contentItem: Ink {
-                    text: modeSelector.text
-                    font.pixelSize: modeSelector.typeSize
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                onClicked: box.showMenu("模式", [
-                    {
-                        label: "默认",
-                        value: "默认"
-                    },
-                    {
-                        label: "计划",
-                        value: "计划"
-                    }
-                ])
-            }
             RowLayout {
                 id: modelControls
-                spacing: 2
+                spacing: appRoot.compact ? 8 : 2
+                readonly property real compactModelWidth: Math.max(0, layout.width - addButton.implicitWidth
+                    - modeSelector.implicitWidth - sendButton.implicitWidth - 3 * toolbar.spacing - spacing)
                 SamayaButton {
+                    id: modeSelector
+                    objectName: "modeSelector"
+                    text: box.mode
+                    typeSize: 13
+                    implicitHeight: toolbar.buttonHeight
+                    implicitWidth: 46
+                    contentItem: Ink {
+                        text: modeSelector.text
+                        font.pixelSize: modeSelector.typeSize
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    onClicked: box.showMenu("模式", [
+                        {label: "默认", value: "默认"},
+                        {label: "计划", value: "计划"}
+                    ])
+                }
+                ResponseSpeedButton {
                     id: fastSelector
                     objectName: "composerSpeedSelector"
                     visible: !appRoot.compact
-                    implicitWidth: 28
-                    implicitHeight: 32
-                    hint: "响应速度 · " + U.speedLabel(appRoot.activeModel.serviceTier)
+                    implicitWidth: toolbar.buttonHeight
+                    implicitHeight: toolbar.buttonHeight
+                    serviceTier: appRoot.activeModel.serviceTier || "default"
                     enabled: box.canChangeModel && !box.modelLoading
                     opacity: appRoot.online && !appRoot.thread.archived ? 1 : 0.45
-                    contentItem: Item {
-                        Image {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 12
-                            height: 16
-                            sourceSize: Qt.size(24, 32)
-                            source: Style.symbol("speed-lightning", Style.ink)
-                        }
-                    }
-                    onClicked: box.withModelSettings(() => {
-                        modelMenu.close();
-                        speedMenu.returnFocus = fastSelector;
-                        speedMenu.open();
-                    })
+                    fill: speedMenu.visible || box.speedLoading || down ? Style.selected : hovered ? Style.hover : "transparent"
+                    onClicked: box.toggleSpeedMenu(fastSelector)
                 }
                 SamayaButton {
                     id: modelSelector
                     objectName: "modelSelector"
-                    implicitWidth: modelParts.implicitWidth + (appRoot.compact ? 8 : 12)
-                    implicitHeight: 36
+                    implicitWidth: appRoot.compact ? Math.min(modelParts.implicitWidth + 8, modelControls.compactModelWidth)
+                                                   : modelParts.implicitWidth + 20
+                    implicitHeight: toolbar.buttonHeight
                     text: box.modelLabel + (effortText.text ? " " + effortText.text : "")
                     enabled: box.canChangeModel
                     opacity: appRoot.online && !appRoot.thread.archived ? 1 : 0.45
-                    hint: box.running ? "本轮结束后可更改模型" : text
-                    fill: "transparent"
+                    hint: modelMenu.visible || speedMenu.visible ? "" : text
+                    fill: modelMenu.visible || down ? Style.selected : enabled && hovered ? Style.hover : "transparent"
                     contentItem: Item {
                         RowLayout {
                             id: modelParts
                             spacing: appRoot.compact ? 4 : 6
                             anchors.fill: parent
-                            anchors.leftMargin: appRoot.compact ? 4 : 0
+                            anchors.leftMargin: appRoot.compact ? 4 : 8
                             anchors.rightMargin: appRoot.compact ? 4 : 12
                             Image {
                                 visible: box.modelLoading
@@ -640,13 +675,15 @@ Rectangle {
                             Ink {
                                 text: box.modelLabel
                                 font.pixelSize: 13
-                                Layout.preferredWidth: Math.min(implicitWidth, appRoot.compact ? Math.max(36, box.width - 210) : 160, 160)
+                                Layout.fillWidth: appRoot.compact
+                                Layout.minimumWidth: 0
+                                Layout.preferredWidth: Math.min(implicitWidth, 160)
                                 Layout.preferredHeight: 20
                             }
                             Ink {
                                 id: effortText
                                 visible: text.length > 0
-                                text: U.effortLabel(appRoot.activeModel.reasoningEffort)
+                                text: U.effortLabel(modelMenu.displayEffort)
                                 font.pixelSize: 13
                                 color: Style.muted
                                 Layout.preferredHeight: 20
@@ -662,6 +699,7 @@ Rectangle {
                 }
             }
             SamayaButton {
+                id: sendButton
                 objectName: "send"
                 glyph: box.stopMode ? "composer-stop" : "arrow"
                 hint: box.stopMode ? "停止本轮" : box.running ? "追加指令" : "发送消息"
@@ -789,11 +827,7 @@ Rectangle {
         width: Math.min(260, box.width)
         x: Math.max(0, layout.x + toolbar.x + modelControls.x + modelSelector.x + modelSelector.width - width)
         y: layout.y + toolbar.y + modelControls.y + modelSelector.y - height - 8
-        onSpeedRequested: {
-            close();
-            speedMenu.returnFocus = modelSelector;
-            speedMenu.open();
-        }
+        onSpeedRequested: box.toggleSpeedMenu(modelSelector)
         onClosed: if (!speedMenu.visible) modelSelector.forceActiveFocus(Qt.OtherFocusReason)
     }
     SpeedMenu {
@@ -801,11 +835,15 @@ Rectangle {
         property Item returnFocus: modelSelector
         objectName: "speedMenu"
         appRoot: box.appRoot
+        editable: box.canChangeModel
+        parent: appRoot.compact ? modelSelector : fastSelector
         width: Math.min(262, box.width)
-        x: Math.max(0, box.width - width)
-        y: -height - 12
+        margins: 8
+        x: parent.width - width
+        y: -height - 8
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onChosen: value => appRoot.modelSetting("fast", value)
-        onClosed: returnFocus.forceActiveFocus(Qt.OtherFocusReason)
+        onClosed: if (!modelMenu.visible) returnFocus.forceActiveFocus(Qt.OtherFocusReason)
     }
     Sheet {
         id: popup

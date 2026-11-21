@@ -5,6 +5,7 @@ AbstractButton {
     id: control
     property string glyph: ""
     property string trailingGlyph: ""
+    property real trailingGlyphRotation: 0
     property string kind: "quiet"
     property bool activeWork: false
     property bool selected: false
@@ -12,7 +13,9 @@ AbstractButton {
     property string hint: ""
     property int glyphSize: 16
     property int typeSize: 14
-    readonly property int labelMargins: 24 + (glyph ? glyphSize + 8 : 0) + (trailingGlyph ? 22 : 0)
+    property int labelPadding: 12
+    property int trailingSpace: 0
+    readonly property int labelMargins: 2 * labelPadding + trailingSpace + (glyph ? glyphSize + 8 : 0) + (trailingGlyph ? 22 : 0)
     property color foreground: kind === "primary" ? Style.primaryText : Style.ink
     property color fill: kind === "primary" ? Style.primary : selected ? Style.selected : hovered ? Style.hover : kind === "outline" ? Style.surface : "transparent"
     hoverEnabled: true
@@ -39,7 +42,7 @@ AbstractButton {
     contentItem: Item {
         Row {
             id: body
-            x: control.alignLeft ? 12 : Math.max(0, (parent.width - width) / 2)
+            x: control.alignLeft ? control.labelPadding : Math.max(0, (parent.width - width) / 2)
             anchors.verticalCenter: parent.verticalCenter
             spacing: 8
             Image {
@@ -88,8 +91,9 @@ AbstractButton {
                         g.addColorStop(0.65, String(Style.muted));
                         ctx.fillStyle = g;
                         ctx.font = control.typeSize + "px '" + Style.family + "'";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(label.text, 0, height / 2);
+                        // Match the baseline of the label used in reduced-motion mode.
+                        ctx.textBaseline = "alphabetic";
+                        ctx.fillText(label.text, 0, label.baselineOffset);
                     }
                 }
                 width: Math.min(implicitWidth, Math.max(0, control.width - control.labelMargins))
@@ -99,6 +103,7 @@ AbstractButton {
                 visible: !!control.trailingGlyph
                 width: visible ? 14 : 0
                 height: width
+                rotation: control.trailingGlyphRotation
                 sourceSize: Qt.size(28, 28)
                 anchors.verticalCenter: parent.verticalCenter
                 source: visible ? Style.symbol(control.trailingGlyph, control.foreground) : ""

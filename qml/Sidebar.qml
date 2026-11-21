@@ -10,6 +10,9 @@ Rectangle {
     property bool allProjects: false
     property var expanded: ({})
     color: Style.rail
+    component RailButton: SamayaButton {
+        fill: selected ? Style.selected : hovered ? Style.railHover : "transparent"
+    }
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
@@ -29,7 +32,7 @@ Rectangle {
                 font.weight: Font.Medium
                 Layout.fillWidth: true
             }
-            SamayaButton {
+            RailButton {
                 glyph: "menu"
                 hint: "收起侧栏"
                 onClicked: appRoot.compact ? appRoot.drawer = false : appRoot.collapsed = true
@@ -40,7 +43,7 @@ Rectangle {
         }
         Repeater {
             model: [["搜索任务与项目", "search"], ["任务总览", "panels-top-left"], ["置顶任务", "pin"], ["待我处理", "inbox"]]
-            delegate: SamayaButton {
+            delegate: RailButton {
                 required property var modelData
                 Layout.fillWidth: true
                 alignLeft: true
@@ -79,7 +82,7 @@ Rectangle {
                 limit: rail.allProjects ? -1 : 4
                 holdOrder: projectPointer.hovered
             }
-            footer: SamayaButton {
+            footer: RailButton {
                 visible: appRoot.groups.length > 4
                 height: visible ? 32 : 0
                 text: rail.allProjects ? "收起工作区" : "更多工作区 · " + (appRoot.groups.length - 4)
@@ -102,7 +105,7 @@ Rectangle {
                     RowLayout {
                         anchors.fill: parent
                         spacing: 0
-                        SamayaButton {
+                        RailButton {
                             Layout.fillWidth: true
                             alignLeft: true
                             glyph: g.opened ? "wm-down" : "chevron"
@@ -114,6 +117,7 @@ Rectangle {
                             }
                         }
                         Ink {
+                            visible: !g.opened && text.length > 0
                             font.pixelSize: 12
                             color: Style.muted
                             text: {
@@ -121,12 +125,12 @@ Rectangle {
                                 return n ? "运行中 " + n : "";
                             }
                         }
-                        SamayaButton {
+                        RailButton {
                             glyph: "plus"
                             hint: "新会话"
                             onClicked: appRoot.newThread(g.modelData.path)
                         }
-                        SamayaButton {
+                        RailButton {
                             glyph: "more"
                             hint: "管理工作区"
                             onClicked: appRoot.recordsFor(g.modelData.path)
@@ -140,19 +144,38 @@ Rectangle {
                         limit: 5
                         holdOrder: projectPointer.hovered
                     }
-                    delegate: SamayaButton {
+                    delegate: RailButton {
+                        id: conversation
                         required property QtObject row
+                        readonly property var thread: row?.value?.thread
+                        objectName: "sidebarThread-" + (thread?.id || "")
                         x: 20
                         width: g.width - 28
                         alignLeft: true
-                        text: U.title(row.value.thread)
-                        selected: appRoot.page === "chat" && appRoot.currentId === row.value.thread.id
-                        onClicked: appRoot.openThread(row.value.thread.id)
+                        text: U.title(thread)
+                        trailingSpace: status.visible ? Math.ceil(status.implicitWidth) + 8 : 0
+                        selected: appRoot.page === "chat" && appRoot.currentId === thread?.id
+                        onClicked: if (thread) appRoot.openThread(thread.id)
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: point => appRoot.showThreadMenu(conversation, point.position, conversation.thread)
+                        }
+                        Ink {
+                            id: status
+                            anchors.right: parent.right
+                            anchors.rightMargin: conversation.labelPadding
+                            anchors.verticalCenter: parent.verticalCenter
+                            font.pixelSize: 12
+                            color: Style.muted
+                            visible: text.length > 0
+                            text: appRoot.showOpeningThread && appRoot.openingThreadId === conversation.thread?.id
+                                  ? "正在打开" : U.active(conversation.thread) ? "运行中" : ""
+                        }
                     }
                 }
             }
         }
-        SamayaButton {
+        RailButton {
             Layout.fillWidth: true
             alignLeft: true
             glyph: "history"
@@ -160,7 +183,7 @@ Rectangle {
             selected: appRoot.page === "records"
             onClicked: appRoot.recordsFor("")
         }
-        SamayaButton {
+        RailButton {
             Layout.fillWidth: true
             alignLeft: true
             glyph: "settings"

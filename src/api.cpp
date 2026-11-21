@@ -34,12 +34,17 @@ Api::Api(QObject *parent) : QObject(parent)
     process_.setCreateProcessArgumentsModifier([this](QProcess::CreateProcessArguments *args) {
         stdio_->installHandles(args);
     });
+    daemonStarter_.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        args->flags = (args->flags & ~DWORD(CREATE_NEW_CONSOLE)) | CREATE_NO_WINDOW;
+    });
     stdioTimer_.setInterval(15);
     connect(&stdioTimer_, &QTimer::timeout, this, [this] {
         QByteArray bytes;
         if (stdio_->pump(bytes)) consumeMessages(bytes);
         else {
-            failConnection(tr("Codex 标准输入输出连接已断开。"));
+            stdioTimer_.stop();
+            if (!starting_ || channel_.upgraded() || triedDaemonStart_)
+                failConnection(tr("Codex 标准输入输出连接已断开。"));
             process_.kill();
         }
     });
@@ -51,6 +56,10 @@ Api::Api(QObject *parent) : QObject(parent)
         if (error == QProcess::FailedToStart) failConnection(tr("无法启动本机 Codex：%1").arg(process_.errorString()));
     });
     connect(&process_, &QProcess::finished, this, [this](int code) {
+        if (!shuttingDown_ && starting_ && !channel_.upgraded() && !triedDaemonStart_) {
+            startDaemon();
+            return;
+        }
         failConnection(tr("Codex 本地代理已退出（%1）。").arg(code));
     });
     connect(&process_, &QProcess::started, this, [this] {
@@ -59,6 +68,18 @@ Api::Api(QObject *parent) : QObject(parent)
         stdioTimer_.start();
 #endif
         stdio_->send(channel_.handshake());
+    });
+    daemonStarter_.setStandardInputFile(QProcess::nullDevice());
+    daemonStarter_.setStandardOutputFile(QProcess::nullDevice());
+    daemonStarter_.setStandardErrorFile(QProcess::nullDevice());
+    connect(&daemonStarter_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            failConnection(tr("无法运行 Codex App Server 启动命令：%1").arg(daemonStarter_.errorString()));
+    });
+    connect(&daemonStarter_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        if (shuttingDown_ || !starting_) return;
+        if (status == QProcess::NormalExit && code == 0) startProxy();
+        else failConnection(tr("本机 Codex App Server 启动失败（退出代码 %1）。请打开已安装的 Codex 后重试。").arg(code));
     });
 }
 
@@ -79,6 +100,10 @@ void Api::initialize()
 Api::~Api()
 {
     shuttingDown_ = true;
+    if (daemonStarter_.state() != QProcess::NotRunning) {
+        daemonStarter_.kill();
+        daemonStarter_.waitForFinished(1000);
+    }
 #ifdef Q_OS_WIN
     stdioTimer_.stop();
     stdio_->closeInput();
@@ -99,24 +124,57 @@ QString Api::segment(const QString &value)
 void Api::start(Callback done)
 {
     if (ready_) { done({}); return; }
-    if (process_.state() != QProcess::NotRunning) { done({{}, tr("Codex 正在启动。")}); return; }
+    if (starting_ || process_.state() != QProcess::NotRunning || daemonStarter_.state() != QProcess::NotRunning) {
+        done({{}, tr("Codex 正在启动。")});
+        return;
+    }
     const auto home = qEnvironmentVariable("CODEX_HOME", QDir::home().filePath(".codex"));
     const auto socket = QDir(home).filePath("app-server-control/app-server-control.sock");
     auto path = QDir(home).filePath("packages/app-server-daemon/current/bin/codex.exe");
     if (!QFileInfo(path).isFile()) path = QStandardPaths::findExecutable("codex.exe");
     if (!QFileInfo(path).isFile()) { done({{}, tr("未找到本机 Codex 代理，请打开已安装的 Codex。")}); return; }
-#ifdef Q_OS_WIN
-    if (!stdio_->open()) { stdio_->close(); done({{}, tr("无法创建 Codex 本地通信管道。")}); return; }
-#endif
     process_.setWorkingDirectory(QDir::homePath());
     process_.setProgram(path);
     process_.setArguments({"app-server", "proxy", "--sock", QDir::toNativeSeparators(socket)});
+    triedDaemonStart_ = false;
     starting_ = std::move(done);
-    process_.start();
+    startProxy();
+}
+
+void Api::startProxy()
+{
+#ifdef Q_OS_WIN
+    if (!stdio_->open()) {
+        failConnection(tr("无法创建 Codex 本地通信管道。"));
+        return;
+    }
+#endif
     const auto attempt = ++connectionAttempt_;
     QTimer::singleShot(8000, this, [this, attempt] {
-        if (starting_ && connectionAttempt_ == attempt) { failConnection(tr("连接超时，请确认本机 Codex App Server 已运行。")); process_.kill(); }
+        if (starting_ && connectionAttempt_ == attempt) {
+            failConnection(tr("连接本机 Codex App Server 超时。"));
+            process_.kill();
+        }
     });
+    process_.start();
+}
+
+void Api::startDaemon()
+{
+    triedDaemonStart_ = true;
+#ifdef Q_OS_WIN
+    stdioTimer_.stop();
+    stdio_->close();
+#endif
+    daemonStarter_.setWorkingDirectory(process_.workingDirectory());
+    const auto attempt = ++connectionAttempt_;
+    QTimer::singleShot(20000, this, [this, attempt] {
+        if (starting_ && connectionAttempt_ == attempt) {
+            failConnection(tr("启动本机 Codex App Server 超时。"));
+            daemonStarter_.kill();
+        }
+    });
+    daemonStarter_.start(process_.program(), {"app-server", "daemon", "start"});
 }
 
 void Api::rpc(const QString &method, const QJsonObject &params, Callback done)
@@ -267,6 +325,12 @@ void Api::onEvent(const QString &method, QJsonObject params)
         if (delta) {
             item = index < items.size() ? items.at(index).toObject() : QJsonObject{{"id", itemId}, {"type", "agentMessage"}};
             item.insert("text", item.value("text").toString() + params.value("delta").toString());
+        } else {
+            auto timing = index < items.size() ? items.at(index).toObject().value("samayaTiming").toObject() : QJsonObject{};
+            const auto timeKey = method == "item/started" ? "startedAtMs" : "completedAtMs";
+            const auto time = params.value(timeKey);
+            if (time.isDouble()) timing.insert(timeKey, time);
+            if (!timing.isEmpty()) item.insert("samayaTiming", timing);
         }
         if (index == items.size()) items.append(item);
         else items.replace(index, item);

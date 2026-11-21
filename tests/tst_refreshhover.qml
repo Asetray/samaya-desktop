@@ -10,7 +10,10 @@ Item {
     QtObject {
         id: desktop
         readonly property bool reducedMotion: false
-        function styleReplyLinks(document, color) {}
+        function styleReply(document, color, hoverColor, hoverBackground) {}
+        function setReplyLinkHover(document, position) {}
+        function repaintReplySelection(document) {}
+        function styleUserMessage(document) {}
     }
     QtObject {
         id: app
@@ -86,7 +89,7 @@ Item {
             const point = item.mapToItem(scene, 3, item.height / 2)
             mouseMove(scene, point.x, point.y)
             tryCompare(item, "hovered", true)
-            compare(item.background.color, UI.Style.hover)
+            compare(item.background.color, UI.Style.railHover)
             mousePress(scene, point.x, point.y)
             app.rows = records(["f", "a", "b", "c", "d", "e"])
             wait(40)
@@ -117,9 +120,11 @@ Item {
         function test_toolPressDuringRefresh(data) {
             app.tab = data.tab
             wait(60)
-            const item = button(chat, "完成 25")
+            const conversation = data.tab === "对话"
+            const item = conversation ? findChild(chat, "workProcessToggle") : button(chat, "完成 25")
             verify(item)
-            const point = item.mapToItem(scene, item.width - 3, 3)
+            const targetX = conversation ? 3 : item.width - 3
+            const point = item.mapToItem(scene, targetX, 3)
             mouseMove(scene, point.x, point.y)
             tryCompare(item, "hovered", true)
             compare(item.background.color, UI.Style.hover)
@@ -134,17 +139,49 @@ Item {
                 app.thread = snapshot(25, "流式更新 " + i)
                 wait(16)
             }
-            verify(item && button(chat, "完成 25") === item, "Live updates replaced the pressed tool button")
+            const current = conversation ? findChild(chat, "workProcessToggle") : button(chat, "完成 25")
+            verify(current === item, "Live updates replaced the pressed tool button")
             verify(item.hovered && item.pressed)
             mouseRelease(scene, point.x, point.y)
-            tryCompare(item, "trailingGlyph", "wm-down")
+            if (conversation)
+                tryCompare(item, "trailingGlyphRotation", 90)
+            else
+                tryCompare(item, "trailingGlyph", "wm-down")
             app.thread = snapshot(26, "最终回答")
-            tryVerify(() => item.text.startsWith("完成 26") && item.trailingGlyph === "wm-down")
+            tryVerify(() => conversation ? findChild(chat, "workProcessCount").text.includes("26 次活动")
+                && item.trailingGlyphRotation === 90
+                : item.text.startsWith("完成 26") && item.trailingGlyph === "wm-down")
             wait(50)
-            compare(item.mapToItem(scene, item.width - 3, 3), point)
-            verify(item.hovered)
+            compare(item.mapToItem(scene, targetX, 3), point)
+            if (conversation)
+                mouseMove(scene, point.x + 1, point.y)
+            tryCompare(item, "hovered", true)
             mouseClick(scene, point.x, point.y)
-            tryCompare(item, "trailingGlyph", "chevron")
+            if (conversation)
+                tryCompare(item, "trailingGlyphRotation", 0)
+            else
+                tryCompare(item, "trailingGlyph", "chevron")
+        }
+        function test_historyPrependKeepsVisibleMessage() {
+            const turns = []
+            for (let i = 0; i < 60; ++i) {
+                turns.push({id: "turn-" + i, status: "completed", items: [
+                    {id: "user-" + i, type: "userMessage", content: [{type: "text", text: "历史消息 " + i}]}
+                ]})
+            }
+            app.thread = {id: "a", turns: turns}
+            const scroll = findChild(chat, "transcriptScroll")
+            scroll.following = false
+            tryVerify(() => !!button(chat, "加载更早的消息"))
+            scroll.contentY = 0
+            const anchor = findChild(chat, "conversationRow")
+            compare(anchor.entry.item.id, "user-12")
+            const offset = anchor.mapToItem(scroll, 0, 0).y
+            const load = button(chat, "加载更早的消息")
+            mouseClick(load, load.width / 2, load.height / 2)
+            tryCompare(chat, "historyCount", 96)
+            tryVerify(() => Math.abs(anchor.mapToItem(scroll, 0, 0).y - offset) <= 1)
+            compare(findChild(chat, "conversationRow").entry.item.id, "user-0")
         }
         function cleanup() {
             mouseRelease(scene, scene.width - 2, 2)

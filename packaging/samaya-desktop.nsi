@@ -6,7 +6,7 @@ Var ExtractOnly
 !include "x64.nsh"
 
 !define PRODUCT "samaya-desktop"
-!define VERSION "0.3.5"
+!define VERSION "0.3.6"
 !ifndef UNINSTALL_KEY
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\SamayaDesktop"
 !endif

@@ -4,6 +4,7 @@
 #include <QQmlEngine>
 #include <QQuickTextDocument>
 #include <QSettings>
+#include <QWindow>
 
 class Desktop final : public QObject {
     Q_OBJECT
@@ -21,7 +22,14 @@ public:
     Q_INVOKABLE QVariantMap attachment(const QUrl &url);
     Q_INVOKABLE QVariantMap clipboardImage();
     Q_INVOKABLE void copy(const QString &text);
-    Q_INVOKABLE void styleReplyLinks(QQuickTextDocument *view, const QColor &color);
+    Q_INVOKABLE bool openReplyLink(const QString &link, const QString &workspace);
+    Q_INVOKABLE void styleReply(QQuickTextDocument *view, const QColor &color, const QColor &hoverColor,
+                                const QColor &hoverBackground);
+    Q_INVOKABLE void setReplyLinkHover(QQuickTextDocument *view, int position);
+    Q_INVOKABLE void repaintReplySelection(QQuickTextDocument *view);
+    Q_INVOKABLE void styleUserMessage(QQuickTextDocument *view);
+    Q_INVOKABLE void styleWindowFrame(QWindow *window, bool dark, const QColor &caption,
+                                      const QColor &text, const QColor &border);
     Q_INVOKABLE void saveArtifact(const QString &id, const QString &path, QJSValue callback);
     Q_INVOKABLE QVariant setting(const QString &key, const QVariant &fallback) const;
     Q_INVOKABLE void save(const QString &key, const QVariant &value);

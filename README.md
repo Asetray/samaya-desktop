@@ -4,12 +4,12 @@ Samaya 的 Windows 原生桌面客户端，使用 C++20 和 Qt Quick。界面以
 
 ## 运行
 
-1. 打开现有的 Windows Codex 应用，让它的 App Server 保持运行。
-2. 使用安装版时，双击 `samaya-desktop-0.3.5-win-x64-setup.exe`，完成后从开始菜单打开 **Samaya Desktop → Samaya**。安装按当前用户进行，升级前请先退出旧版 Samaya。
-3. 使用免安装版时，把 `samaya-desktop-0.3.5-win-x64-portable.zip` 完整解压到可写目录，然后运行里面的 `samaya-desktop.exe`。
+1. 安装 Windows Codex 并登录。打开 Samaya 时，它会复用当前运行的本机 App Server，或在连接不可用时尝试在后台启动服务。
+2. 使用安装版时，双击 `samaya-desktop-0.3.6-win-x64-setup.exe`，完成后从开始菜单打开 **Samaya Desktop → Samaya**。安装按当前用户进行，升级前请先退出旧版 Samaya。
+3. 使用免安装版时，把 `samaya-desktop-0.3.6-win-x64-portable.zip` 完整解压到可写目录，然后运行里面的 `samaya-desktop.exe`。
 4. 在「任务总览」打开原有会话，或点击「新任务」选择工作目录。输入消息后按 Enter 发送，Shift+Enter 换行。「待我处理」汇集当前连接收到的审批和问题。Ctrl+K 可搜索任务与项目。
 
-两个发行包均包含 Qt、QML 模块、中文字体和 Visual C++ 运行库。目标系统为 Windows 10 1809 起及 Windows 11 x64。界面本身可离线打开，在线模型请求使用现有 Codex 账户。没有运行中的本机实例时，可在「设置与连接」里重新连接。Codex 使用自定义目录时，需让 Samaya 继承相同的 `CODEX_HOME`。白垣和苍渊主题在「设置与连接」中切换，偏好和置顶记录保存在本机当前用户下。
+两个发行包均包含 Qt、QML 模块、中文字体和 Visual C++ 运行库。目标系统为 Windows 10 1809 起及 Windows 11 x64。界面本身可离线打开，在线模型请求使用现有 Codex 账户。启动服务失败时，可打开 Windows Codex，再从「设置与连接」重新连接。Codex 使用自定义目录时，需让 Samaya 继承相同的 `CODEX_HOME`。白垣和苍渊主题在「设置与连接」中切换，偏好和置顶记录保存在本机当前用户下。
 
 ## 构建
 
